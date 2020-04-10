@@ -145,7 +145,12 @@ void dchannels_t::StateMachine(byte b)
         }
         frameState = 8;                  // low case command can be short circuited by a CL, a LF or a plus sign (+)
       } else {
-        frameState = -1;                 // The byte was invalid: trash the frame and start waiting for a new one
+        if (b >= 'G' && b <= 'Z') {       // If it is a valid command  [G..Z]
+          frameState = -1;                
+          curChannel = b;                 // Store requested channel
+        } else {
+          frameState = -2;                 // The byte was invalid: trash the frame and start waiting for a new one
+        }
       }
     }
 
