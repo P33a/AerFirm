@@ -40,6 +40,7 @@ class PID_t
     float y, y_ref;
     float e, last_e, Se;
     float m, m_max, m_min;
+    float stress, lambda;
     uint8_t active;
 
     PID_t();

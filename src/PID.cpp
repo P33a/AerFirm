@@ -32,6 +32,8 @@
 PID_t::PID_t()
 {
   Se = 0;
+  stress = 0;
+  lambda = 0.9;
   // Some typical values
   dt = 0.1;
   Kp = 1;
@@ -76,6 +78,10 @@ float PID_t::calc(float new_y_ref, float new_y)
     // OK: integrate the error
     Se = tmpSe;
   }
+
+  // The stress is the integral of the absolute error
+  // with exponential forgetting
+  stress = stress * lambda + fabs(e) * dt;
 
   // Saturate the output
   if (m > m_max) {
