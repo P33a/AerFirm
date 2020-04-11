@@ -26,8 +26,8 @@
   ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
   POSSIBILITY OF SUCH DAMAGE. */
 
-#ifndef MOTORTB9051_H
-#define MOTORTB9051_H
+#ifndef MOTOR_ENCODER_H
+#define MOTOR_ENCODER_H
 
 #include "Arduino.h"
 #include "TimerOne.h"
@@ -36,7 +36,7 @@ const int encoder1A_pin = A3;  // Motor encoder A input
 const int encoder1B_pin = A2;  // Motor encoder B input
 
 
-class motorTB9051_t
+class motor_DC_t
 {
   const int M1_ENABLE_pin = 2; // disables both outputs of motor when LOW
 
@@ -68,7 +68,7 @@ class motorTB9051_t
   
     float v, v_max;
 
-    motorTB9051_t();
+    motor_DC_t();
     
     void init(uint32_t usecs);
 
@@ -81,74 +81,5 @@ class motorTB9051_t
 };
 
 
-class motorMC33926_t
-{
-  
-  const int nD2_pin = 4;     // Tri-state disables both outputs of both motor channels when LOW
-                            // toggling resets latched driver fault condition
-  const int M1_DIR_pin = 7;  // Motor 1 direction input
-  const int M2_DIR_pin = 8;  // Motor 2 direction input
-  const int M1_PWM_pin = 9;  // Motor 1 PWM input
-  const int M2_PWM_pin = 10; // Motor 2 PWM input
-  const int nSF_pin = 12;    // Status flag indicator (LOW indicates fault)
-  const int M1_FB_pin = A0;  // Motor 1 current sense output (approx. 525 mV/A)
-  const int M2_FB_pin = A1;  // Motor 2 current sense output (approx. 525 mV/A)
 
-  const int dir_pin = M1_DIR_pin;
-  const int PWM_pin = M1_PWM_pin;
-  
-  public:
-    int odo;
-    int32_t encoder_pos;
-
-    int PWM_value, PWM_max;
-    uint16_t timeout_count, timeout_top;
-
-    float speed, pos;
-    float speed_ref, pos_ref;
-  
-    float v, v_max;
-
-    motorMC33926_t();
-    
-    void init(uint32_t usecs);
-
-    void update_encoder(void);
-
-    
-    void set_PWM(int new_PWM, byte mot_enable);
-    void set_voltage(float new_voltage);
-    void add_voltage(float add_voltage);
-};
-
-
-class motorL298_t
-{
-  const int dir_pin = 7;
-  const int PWM_pin = 6;
-
-  public:
-    int odo;
-    int32_t encoder_pos;
- 
-    int PWM_value;
-    uint16_t timeout_count, timeout_top;
-
-    float speed, pos;
-    float speed_ref, pos_ref;
-  
-    float v, v_max;
-
-    motorL298_t();
-    
-    void init(uint32_t usecs);
-
-    void update_encoder(void);
-
-    void set_PWM(int new_PWM, byte mot_enable);
-    void set_voltage(float new_voltage);
-    void add_voltage(float add_voltage);
-};
-
-
-#endif // MOTORTB9051
+#endif // MOTOR_ENCODER
