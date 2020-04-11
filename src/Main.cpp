@@ -64,7 +64,7 @@ uint32_t last_view_mode_change;
 //  3 ->  TM1638 Clock
 //  4 ->  Motor Enable (Tri-state disables both outputs of both motor channels when LOW)
 //  5 <-> TM1638 DIO 
-//  6 -> 
+//  6 ->  Buzzer
 //  7 ->  Motor Dir
 //  8 <- 
 //  9 ->  Motor PWM
@@ -86,6 +86,8 @@ uint32_t last_view_mode_change;
 const int end_switch_A_pin = 11;  //End switch (Normaly Open) input
 const int pressure_pin = A5;
 
+const int buzzer_pin = 6;
+
 button_t button_bmp_up, 
          button_bmp_down, 
          button_start, 
@@ -101,7 +103,7 @@ dchannels_t serial_channels;
 
 byte end_switch_A, prev_end_switch_A; 
 
-motorTB9051_t motor;
+motor_DC_t motor;
 
 PID_t PID_speed, PID_pos;
 
@@ -119,10 +121,11 @@ uint8_t save_requested;
 #define bmp_par Pars[7]
 #define volume_par Pars[8]
 #define ie_ratio_par Pars[9]
+#define ticks_to_m Pars[10]
 
 float dt;
 
-float ticks_to_m;
+//float ticks_to_m;
 
 trajectory_t trajectory;
 
@@ -137,6 +140,8 @@ unsigned long last_micros = 0;        // last control time
 unsigned long interval_us;            // Control period in microseconds
 
 float manual_motor_voltage;
+
+int buzzer_beep;
 
 void pump_set_state(byte new_state);
 void save_prepare(void);
@@ -191,6 +196,7 @@ void process_serial_packet(char channel, char sub_channel, uint32_t value, dchan
 
    } else if (sub_channel == 't') {
      pump_set_state(value);
+     if(value == ps_init) buzzer_beep = 1;
      
    } else if (sub_channel == 'v') {
      save_prepare();
@@ -298,7 +304,6 @@ void pump_set_state(byte new_state)
       trajectory.set(motor.pos, 0, pump_cycle.pos_push, 0, pump_cycle.t_push);
       trajectory.active = 1;
      
-      Pars[10] =  pump_cycle.pos_push;
 
     } else if (new_state == ps_hold) {
       trajectory.set(pump_cycle.pos_push, 0, pump_cycle.pos_push, 0, pump_cycle.t_hold);
@@ -350,6 +355,8 @@ void pump_fsm_t::progress(void)
     pump_set_state(ps_idle);
     motor.encoder_pos = 0;
     motor.pos = 0;
+    motor.pos_ref = 0;
+    motor.speed_ref = 0;
   }  
 
 }
@@ -397,7 +404,10 @@ void setup(void)
   pinMode(end_switch_A_pin, INPUT_PULLUP);
   pinMode(pressure_pin, INPUT); 
 
-  analogReference(INTERNAL);
+  pinMode(buzzer_pin, OUTPUT);
+  digitalWrite(buzzer_pin, 0);      
+
+  //analogReference(INTERNAL);
 
   /*
   button_bmp_up.set_pin(button_bmp_up_pin);
@@ -407,7 +417,8 @@ void setup(void)
   button_volume_down.set_pin(button_volume_down_pin);
   
   button_start.set_pin(button_start_pin);
-  button_stop.set_pin(button_stop_pin);*/
+  button_stop.set_pin(button_stop_pin);
+  */
 
   button_bmp_down.set_key(0);
   button_bmp_up.set_key(0);
@@ -432,7 +443,7 @@ void setup(void)
   serial_channels.init(process_serial_packet, serial_write);
   Serial.println("Serial Init");
 
-  ticks_to_m = 0.00000934016269960832; // To do with extra precision
+  //ticks_to_m = 0.00000934016269960832; // To do with extra precision
 
   //motor.set_PWM(0, 0); 
   motor.set_voltage(0.0);
@@ -469,9 +480,16 @@ void setup(void)
     pump.active = 0;
     // Show pressure
     view_mode = vm_pressure;
+  } else if (keys == 0b00000011) {
+    pump.active = 1;
+    // Load defaults (factory Reset)
+    fill_sane_pars();
+    save_prepare();
   } else {
     pump.active = 1;
   }
+  
+
   //view_mode = vm_pressure;
   //motor.set_voltage(5.0);
   //while(1);
@@ -495,7 +513,7 @@ void loop()
   }
 
   float lambda = 0.02;
-  pump.pressure = pump.pressure * (1 - lambda) +  analogRead(pressure_pin) * lambda;
+  pump.pressure_raw = pump.pressure_raw * (1 - lambda) +  analogRead(pressure_pin) * lambda;
 
 
   act_micros = micros();
@@ -506,6 +524,16 @@ void loop()
     last_micros = act_micros;   
 
     motor.update_encoder();
+
+    pump.pressure_cmH2O = 70.308893732 * (pump.pressure_raw -  Pars[11]) / (0.8 * 1024);
+    
+    // buzzer on while buzzer_beep is not zero
+    if (buzzer_beep) {
+      buzzer_beep--;
+      digitalWrite(buzzer_pin, 0);
+    } else {
+      digitalWrite(buzzer_pin, 1);
+    }
 
     // Motor position and speed in SI units
     motor.speed = ticks_to_m * motor.odo / dt;
@@ -562,7 +590,7 @@ void loop()
     //pump.pressure = analogRead(pressure_pin);
 
     // Display things
-    uint32_t st = micros();
+    //uint32_t st = micros();
 
     char workStr[16] = {0};
     int ibmp, ivolume;//, ipos;
@@ -597,7 +625,7 @@ void loop()
       if (view_mode_must_change) view_mode = vm_bpm;
 
     } else if (view_mode == vm_pressure) {
-      sprintf(workStr, "Pr  %4.0f", (double)(pump.pressure - 478));
+      sprintf(workStr, "Pr   %4.1f", (double)(pump.pressure_cmH2O));
 
     }
 
@@ -607,7 +635,7 @@ void loop()
 
     tm.displayText(workStr);
     
-    Pars[11] = (micros() - st) / 1000;
+    //Pars[11] = (micros() - st) / 1000;
     //tm.display7Seg(7, 0b01000000);
     //tm.setLED(position, value & 1);
     
@@ -617,6 +645,9 @@ void loop()
       send_par_index++;
       if (send_par_index >= NUM_PARS) send_par_index = 0;
     }
+
+    // send Pressure
+    serial_channels.sendFloat('W', 'p', pump.pressure_cmH2O); 
     
     // send speed
     serial_channels.sendFloat('W', 'o', motor.speed); 
@@ -725,8 +756,8 @@ void fill_sane_pars(void)
   Pars[7] = 20; // BPM
   Pars[8] = 0.5; // Volume
   Pars[9] = 2; // I/E	ratio
-  Pars[10] = 0; // 
-  Pars[11] = 0; // 
+  Pars[10] = 0.00000934016269960832; // ticks_to_m 
+  Pars[11] = 101; // Pmin Offset
   Pars[12] = 0; // 
   Pars[13] = 0.02; // Air_0
   Pars[14] = 0.02; // Air_1
@@ -802,26 +833,28 @@ void normal_key_actions(void)
   if (volume_par < 0.25) volume_par = 0.25;
   if (volume_par > 0.7) volume_par = 0.7;
   if (ie_ratio_par < 0.8) ie_ratio_par = 0.8;
-  if (ie_ratio_par > 3) ie_ratio_par = 3;    
+  if (ie_ratio_par > 4) ie_ratio_par = 4;    
 
+  // Long press stop to save pars
   if (button_stop.time_pressed() > 4000) {
     save_prepare();
     view_mode = vm_save_req;
     last_view_mode_change = millis();
   }
-
 }
 
 void alt1_key_actions(void)
 {
   if (button_bmp_up.re()) {
     motor.set_voltage(manual_motor_voltage);
+    //buzzer_beep = 1;
   } else if (button_bmp_up.fe()) {
     motor.set_voltage(0.0);
   }
 
   if (button_bmp_down.re()) {
     motor.set_voltage(-manual_motor_voltage);
+    //buzzer_beep = 1;
   } else if (button_bmp_down.fe()) {
     motor.set_voltage(0.0);
   }
@@ -855,5 +888,11 @@ void alt1_key_actions(void)
   if (prev_end_switch_A == 0 && end_switch_A) {
     motor.encoder_pos = 0;
     motor.pos = 0;
+  }
+
+  if (button_stop.time_pressed() > 4000) {
+    save_prepare();
+    view_mode = vm_save_req;
+    last_view_mode_change = millis();
   }
 }

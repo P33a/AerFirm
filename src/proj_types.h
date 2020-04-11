@@ -11,7 +11,7 @@ class pump_fsm_t{
   public:
   uint32_t tes, tis;
   byte state, active;
-  float pressure;
+  float pressure_raw, pressure_cmH2O;
   
   void act(void);
   void progress(void);
