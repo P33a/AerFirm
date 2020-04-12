@@ -35,14 +35,15 @@
 #include "trajectory.h"
 #include "button.h"
 
-#include <TM1638plus.h>
+//#include <TM1638plus.h>
+#include <TM1638simple.h>
 
 // GPIO I/O pins on the Arduino connected to strobe, clock, data,
 #define  STROBE_TM 2
 #define  CLOCK_TM 3
 #define  DIO_TM 5
 
-TM1638plus tm(STROBE_TM, CLOCK_TM , DIO_TM);
+TM1638simple_t tm(STROBE_TM, CLOCK_TM , DIO_TM);
 
 #define KEY_BUFFER_SIZE 8
 uint8_t key_buffer[KEY_BUFFER_SIZE];
@@ -449,8 +450,11 @@ void setup(void)
   motor.set_voltage(0.0);
   manual_motor_voltage = 3.0;
 
-  tm.displayBegin(); 
-  tm.displayText("5dpovent");
+  tm.init(); 
+  tm.writeString("5dpovent");
+
+  //digitalWrite(buzzer_pin, 1);      
+  //while(1);
  
   last_micros = micros();
   Serial.println("Init Done");
@@ -633,7 +637,8 @@ void loop()
       last_view_mode_change = millis();
     }
 
-    tm.displayText(workStr);
+    //tm.displayText(workStr);
+    tm.writeString(workStr);
     
     //Pars[11] = (micros() - st) / 1000;
     //tm.display7Seg(7, 0b01000000);
