@@ -38,6 +38,13 @@
 //#include <TM1638plus.h>
 #include <TM1638simple.h>
 
+
+#ifdef PRESSURE_SENSOR_I2C
+//#include <Wire.h>
+#include <WireTimeout.h>
+#endif
+
+
 // GPIO I/O pins on the Arduino connected to strobe, clock, data,
 #define  STROBE_TM 2
 #define  CLOCK_TM 3
@@ -108,7 +115,7 @@ motor_DC_t motor;
 
 PID_t PID_speed, PID_pos;
 
-#define NUM_PARS 16
+#define NUM_PARS 32
 
 float Pars[NUM_PARS];
 uint8_t send_par_index;
@@ -145,6 +152,8 @@ float manual_motor_voltage;
 int buzzer_beep;
 
 void pump_set_state(byte new_state);
+void trajectory_control(void);
+
 void save_prepare(void);
 void save_pars_to_eeprom(void);
 uint8_t read_pars_from_eeprom(void);
@@ -161,10 +170,10 @@ void set_interval(uint32_t new_interval_us)
   PID_pos.dt = dt;
 }
 
-uint32_t crc32c(uint8_t* data, uint8_t num_bytes)
+uint32_t crc32c(uint8_t* data, uint8_t num_bytes, uint32_t chain)
 {
   uint32_t b, mask;
-  uint32_t crc = 0xFFFFFFFF;
+  uint32_t crc = 0xFFFFFFFF ^ chain;
   uint8_t i;
   int8_t shift;
 
@@ -183,56 +192,49 @@ uint32_t crc32c(uint8_t* data, uint8_t num_bytes)
 
 void process_serial_packet(char channel, char sub_channel, uint32_t value, dchannels_t& obj)
 {
- byte i;
+  byte i;
 
- if (channel == 'S')  {
-   if (sub_channel == 'p') {
-     int16_t pwm = value & 0xFFFF;
-     motor.set_PWM(pwm, 1);
-     motor.timeout_count = 0;
-    
-     PID_pos.active = 0;
-     PID_speed.active = 0;
-     trajectory.active = 0;
+  if (channel == 'S')  {
+    if (sub_channel == 'p') {
+      int16_t pwm = value & 0xFFFF;
+      motor.set_PWM(pwm, 1);
 
-   } else if (sub_channel == 't') {
-     pump_set_state(value);
-     if(value == ps_init) buzzer_beep = 1;
-     
-   } else if (sub_channel == 'v') {
-     save_prepare();
-   }
+    } else if (sub_channel == 't') {
+      pump_set_state(value);
+      if(value == ps_init) buzzer_beep = 1;
+      
+    } else if (sub_channel == 'v') {
+      save_prepare();
+    }
 
- } else if (channel == 'L')  {
-   PID_speed.active = !!(value & (1 << 0));
-   PID_pos.active = !!(value & (1 << 1));
-   trajectory.active = !!(value & (1 << 2));
-   trajectory.set(motor.pos, 0, motor.pos, 0, 1);
-   //serial_channels.send('V', 'x', PID_speed.active || PID_pos.active || trajectory.active, 0);
-
- } else if (channel == 'P')  {
+  } else if (channel == 'P')  {
     i = sub_channel - 'i';
-    if (i < NUM_PARS && i >= 0) {
+    if (i < 16 && i >= 0) {
       Pars[i] = *((float *) &value);
     }  
     
- } else if (channel == 'T')  {
-   motor.encoder_pos = value;
+  } else if (channel == 'Q')  {
+    i = sub_channel - 'i';
+    if (i < 16 && i >= 0) {
+      Pars[i + 16] = *((float *) &value);
+    }  
+    
+  } else if (channel == 'T')  {
+    motor.encoder_pos = value;
 
- } else if (channel == 'R')  {
-   motor.speed_ref = *((float *) &value);
-   motor.pos_ref = *((float *) &value);
-   //if (trajectory.active) {
-     trajectory.set(motor.pos, 0, motor.pos_ref, 0, 2);
-   //}
- 
- } else if (channel == 'I')  {
-   set_interval(value);
+  } else if (channel == 'R')  {
+    motor.speed_ref = *((float *) &value);
+    motor.pos_ref = *((float *) &value);
+    trajectory.set(motor.pos, 0, motor.pos_ref, 0, 2);
 
- } else if (channel == 'G')  { // Ping
-   obj.send(channel, sub_channel, value + 1);
-   Serial.println(value + 1);
- }
+  } else if (channel == 'I')  {
+    set_interval(value);
+
+  } else if (channel == 'G')  { // Ping
+    obj.send(channel, sub_channel, value + 1);
+    Serial.println(value + 1);
+  }
+
 }
 
 
@@ -291,44 +293,10 @@ void pump_set_cycle(float bpm, float air_volume, float ie_ratio)
 // ps_sync  ->  Waiting for the end of the cycle
 // ps_error ->  Bad things detected
 
-void pump_set_state(byte new_state)
-{
-  if (new_state != pump.state) {
-    // Here if there was a state change
-
-    // Reset Time Entering State (tes)
-    pump.tes = millis();
-
-    // Things to do when entering a new state
-    if (new_state == ps_push) {
-      pump_set_cycle(bmp_par, volume_par, ie_ratio_par);
-      trajectory.set(motor.pos, 0, pump_cycle.pos_push, 0, pump_cycle.t_push);
-      trajectory.active = 1;
-     
-
-    } else if (new_state == ps_hold) {
-      trajectory.set(pump_cycle.pos_push, 0, pump_cycle.pos_push, 0, pump_cycle.t_hold);
-      trajectory.active = 1;
-    
-    } else if (new_state == ps_pull) {
-      //float m = (pump_cycle.pos_pull - pump_cycle.pos_push) / pump_cycle.t_pull;
-      trajectory.set(pump_cycle.pos_push, 0,  pump_cycle.pos_pull, 0, pump_cycle.t_pull * 0.5);
-      trajectory.active = 1;
-
-    } else if (new_state == ps_sync) {
-      trajectory.set(motor.pos, 0,  pump_cycle.pos_pull, 0, pump_cycle.t_pull * 0.5);
-      trajectory.active = 1;
-    
-    } else if (new_state == ps_idle) {
-      PID_pos.active = 0;
-      PID_speed.active = 0;
-      trajectory.active = 0;
-      motor.set_voltage(0.0);
-    }
-
-    pump.state = new_state;
-  }
-}
+// Debug modes
+// ps_direct -> Set motor voltage
+// ps_PID_speed -> Speed PID control (debug)
+// ps_PID_position -> Position PID control (debug)
 
 void pump_fsm_t::progress(void)
 {
@@ -362,32 +330,75 @@ void pump_fsm_t::progress(void)
 
 }
 
+
+void pump_set_state(byte new_state)
+{
+  if (new_state != pump.state) {
+    // Here if there was a state change
+
+    // Reset Time Entering State (tes)
+    pump.tes = millis();
+
+    // Things to do when entering a new state
+    if (new_state == ps_push) {
+      pump_set_cycle(bmp_par, volume_par, ie_ratio_par);
+      trajectory.set(motor.pos, 0, pump_cycle.pos_push, 0, pump_cycle.t_push);
+
+    } else if (new_state == ps_hold) {
+      trajectory.set(pump_cycle.pos_push, 0, pump_cycle.pos_push, 0, pump_cycle.t_hold);
+    
+    } else if (new_state == ps_pull) {
+      //float m = (pump_cycle.pos_pull - pump_cycle.pos_push) / pump_cycle.t_pull;
+      trajectory.set(pump_cycle.pos_push, 0,  pump_cycle.pos_pull, 0, pump_cycle.t_pull * 0.5);
+
+    } else if (new_state == ps_sync) {
+      trajectory.set(motor.pos, 0,  pump_cycle.pos_pull, 0, pump_cycle.t_pull * 0.5);
+    
+    } else if (new_state == ps_idle) {
+      motor.set_voltage(0.0);
+    }
+
+    pump.state = new_state;
+  }
+}
+
+
+//{ps_init, ps_back, ps_home, ps_idle, ps_push, ps_hold, ps_pull, ps_sync, ps_error, ps_direct, ps_PID_speed, ps_PID_position};
 void pump_fsm_t::act(void)
 {
   switch (pump.state) {
     
     case ps_init:
       motor.set_voltage(-6.0);
-      trajectory.active = 0;
     break;
     
     case ps_back:
       motor.set_voltage(6.0);
-      trajectory.active = 0;
     break;
     
     case ps_home:
       motor.set_voltage(-5.0);
-      trajectory.active = 0;
     break;
     
     case ps_idle:
-      trajectory.active = 0;
     break;
 
+    case ps_push:
     case ps_hold:
-      motor.set_voltage(0.0);
+    case ps_pull:
+    case ps_sync:
+      trajectory_control();
     break;
+
+    case ps_direct:
+      //motor.set_voltage(motor.v);
+    break;    
+    case ps_PID_speed:
+      motor.set_voltage(speed_control(motor.speed_ref , motor.speed));
+    break;    
+    case ps_PID_position:
+      motor.set_voltage(pos_control(motor.pos_ref , motor.pos));
+    break;    
     
     default:
     break;
@@ -395,6 +406,19 @@ void pump_fsm_t::act(void)
 }
 
 
+void trajectory_control(void)
+{
+  float new_voltage;
+  motor.speed_ref = trajectory.get_speed(trajectory.t);
+  new_voltage = speed_control(motor.speed_ref, motor.speed);
+  
+  motor.pos_ref = trajectory.get_position(trajectory.t);
+  new_voltage += pos_control(motor.pos_ref, motor.pos);
+  
+  motor.set_voltage(new_voltage);
+  
+  trajectory.t += dt;
+}
 
 void setup(void)
 {
@@ -407,6 +431,13 @@ void setup(void)
 
   pinMode(buzzer_pin, OUTPUT);
   digitalWrite(buzzer_pin, 0);      
+
+  #ifdef PRESSURE_SENSOR_I2C
+  pinMode(A4, INPUT_PULLUP);
+  pinMode(A5, INPUT_PULLUP);
+  Wire.begin();
+  Wire.setWireTimeoutUs(400);
+  #endif
 
   //analogReference(INTERNAL);
 
@@ -444,17 +475,13 @@ void setup(void)
   serial_channels.init(process_serial_packet, serial_write);
   Serial.println("Serial Init");
 
-  //ticks_to_m = 0.00000934016269960832; // To do with extra precision
+  //ticks_to_m = 0.00000934016269960832/36.9 *  35.5/27.4 * 27; // To do with extra precision
 
-  //motor.set_PWM(0, 0); 
   motor.set_voltage(0.0);
   manual_motor_voltage = 3.0;
 
   tm.init(); 
   tm.writeString("5dpovent");
-
-  //digitalWrite(buzzer_pin, 1);      
-  //while(1);
  
   last_micros = micros();
   Serial.println("Init Done");
@@ -477,28 +504,47 @@ void setup(void)
   //keys = 0b10000000;
   //keys = 0b00000001;
   if (keys == 0b10000000) {
-    pump.active = 0;
     // Motor manual action
+    pump.state = ps_direct;
     view_mode = vm_position;
   } else if (keys == 0b00000001) {
-    pump.active = 0;
+    pump.state = ps_direct;
     // Show pressure
     view_mode = vm_pressure;
   } else if (keys == 0b00000011) {
-    pump.active = 1;
     // Load defaults (factory Reset)
     fill_sane_pars();
     save_prepare();
   } else {
-    pump.active = 1;
+    //pump.active = 1;
   }
-  
-
-  //view_mode = vm_pressure;
-  //motor.set_voltage(5.0);
-  //while(1);
 }
 
+
+float read_i2c_pressure_sensor(void)
+{
+  int adc; //error_status, temp;
+  uint32_t ti, tf;
+ 
+  // request reading from sensor
+  Wire.requestFrom(0x28, 2);    // request 2 bytes from slave device 0x28
+
+  // receive reading from sensor
+  ti = micros();
+  while (Wire.available() < 2) {
+    tf = micros() - ti;
+    if (tf > 1000) return 1638;
+  }
+
+  adc = Wire.read();
+  // error status: 0: ok, 1: "device in command mode"?, 2: stale data, 3: "diagnostic condition exists"
+  // error_status = (adc >> 6) & 3; 
+  adc = ((adc & 0x3f) << 8) | Wire.read();
+  //temp = Wire.read();
+  //temp = (temp << 3) | (Wire.read() >> 5);
+
+  return adc;
+}
 
 void loop()
 {
@@ -516,8 +562,10 @@ void loop()
     save_pars_to_eeprom();
   }
 
+  #ifdef PRESSURE_SENSOR_ANALOG
   float lambda = 0.02;
   pump.pressure_raw = pump.pressure_raw * (1 - lambda) +  analogRead(pressure_pin) * lambda;
+  #endif
 
 
   act_micros = micros();
@@ -529,7 +577,14 @@ void loop()
 
     motor.update_encoder();
 
+    #ifdef PRESSURE_SENSOR_ANALOG
     pump.pressure_cmH2O = 70.308893732 * (pump.pressure_raw -  Pars[11]) / (0.8 * 1024);
+    #endif
+
+    #ifdef PRESSURE_SENSOR_I2C
+    pump.pressure_cmH2O =  10.197442889 * (read_i2c_pressure_sensor() -  1638) * 10.0 / (14745 - 1638);
+    #endif
+
     
     // buzzer on while buzzer_beep is not zero
     if (buzzer_beep) {
@@ -563,35 +618,15 @@ void loop()
     button_start.read_key(keys & (1 << 6));
     button_stop.read_key(keys & (1 << 7));
 
-    if (pump.active) {
-      normal_key_actions();
-    } else {
+    if (pump.state == ps_direct) {
       alt1_key_actions();
+    } else {
+      normal_key_actions();
     }
 
-    // Pump state machine
-    if (pump.active) {
-      pump.progress();
-      pump.act();
-    }
-
-    // Possible controllers
-    if (PID_speed.active) {
-      motor.set_voltage(speed_control(motor.speed_ref , motor.speed));
-    }
-    if (PID_pos.active) {
-      motor.set_voltage(pos_control(motor.pos_ref , motor.pos));
-    }
-    
-    if (trajectory.active) {
-      motor.speed_ref = trajectory.get_speed(trajectory.t);
-      motor.set_voltage(speed_control(motor.speed_ref, motor.speed));
-      motor.pos_ref = trajectory.get_position(trajectory.t);
-      motor.add_voltage(pos_control(motor.pos_ref, motor.pos));
-      trajectory.t += dt;
-    }
-
-    //pump.pressure = analogRead(pressure_pin);
+    // Geral state machine
+    pump.progress();
+    pump.act();
 
     // Display things
     //uint32_t st = micros();
@@ -637,16 +672,18 @@ void loop()
       last_view_mode_change = millis();
     }
 
-    //tm.displayText(workStr);
     tm.writeString(workStr);
     
     //Pars[11] = (micros() - st) / 1000;
-    //tm.display7Seg(7, 0b01000000);
     //tm.setLED(position, value & 1);
     
     // send Pars Table sequentially (four for each loop)
     for (uint8_t i = 0; i < 4; i++) {
-      serial_channels.sendFloat('Y', 'i' + send_par_index, Pars[send_par_index]);
+      if (send_par_index < 16) {
+        serial_channels.sendFloat('Y', 'i' + send_par_index, Pars[send_par_index]);
+      } else {
+        serial_channels.sendFloat('Z', 'i' + send_par_index - 16, Pars[send_par_index]);
+      }
       send_par_index++;
       if (send_par_index >= NUM_PARS) send_par_index = 0;
     }
@@ -667,7 +704,8 @@ void loop()
     serial_channels.send('M', 'p', delta / 10, motor.PWM_value);     
     
     // sendPID state
-    serial_channels.send('V', 'x', pump.state, PID_speed.active | (PID_pos.active << 1) | (trajectory.active << 2) | (end_switch_A << 3));
+    serial_channels.send('V', 'x', pump.state, (end_switch_A << 3));
+    //serial_channels.send('V', 'x', pump.state, PID_speed.active | (PID_pos.active << 1) | (trajectory.active << 2) | );
 
     // End MetaPacket
     // sendOdometry
@@ -687,6 +725,9 @@ void loop()
   }
 }
 
+// Incremente this value each time the meaning of any value in Pars[] changes
+// When reading old Pars in EEPROM it will consider the stored values inavlid and restore the default ones
+#define CRC32HEADER 0
 
 // Non blocking EEPROM save for the Pars array
 
@@ -704,7 +745,7 @@ void save_prepare(void)
   }
 
   // Calculate the crc32 check for the buffer 
-  uint32_t crc = crc32c(&(save_buffer[4]), SAVE_BUFFER_SIZE - 4);
+  uint32_t crc = crc32c(&(save_buffer[4]), SAVE_BUFFER_SIZE - 4, CRC32HEADER);
   // and store it on the first four bytes
   *((uint32_t*)save_buffer) = crc;
 
@@ -725,7 +766,7 @@ void save_pars_to_eeprom(void)
   // Next time we save the next byte
   save_par_byte++;
   if (save_par_byte >= (int)SAVE_BUFFER_SIZE) {
-    save_par_byte = 0;
+    save_par_byte = 0; 
     save_requested = 0;
   }
 }
@@ -734,7 +775,7 @@ uint8_t read_pars_from_eeprom(void)
 {
   eeprom_read_block((void*)save_buffer, 0, SAVE_BUFFER_SIZE);
   // Calculate the crc32 check for the buffer 
-  uint32_t crc = crc32c(&(save_buffer[4]), SAVE_BUFFER_SIZE - 4);
+  uint32_t crc = crc32c(&(save_buffer[4]), SAVE_BUFFER_SIZE - 4, CRC32HEADER);
   if (*((uint32_t*)save_buffer) == crc ) {
     byte* p = (byte*)Pars;
 
@@ -745,7 +786,7 @@ uint8_t read_pars_from_eeprom(void)
     }
     return 1;
   } else {
-    return 0;
+    return 0; // The parameter were invalid
   }
 }
 

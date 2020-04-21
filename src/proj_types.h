@@ -3,14 +3,17 @@
 
 #include "Arduino.h"
 
-enum pump_state_t {ps_init, ps_back, ps_home, ps_idle, ps_push, ps_hold, ps_pull, ps_sync, ps_error};
+//#define PRESSURE_SENSOR_ANALOG 1
+#define PRESSURE_SENSOR_I2C 2
+
+enum pump_state_t {ps_init, ps_back, ps_home, ps_idle, ps_push, ps_hold, ps_pull, ps_sync, ps_error, ps_direct, ps_PID_speed, ps_PID_position};
 
 enum view_mode_t {vm_bpm, vm_volume, vm_ie_ratio, vm_cycle, vm_position, vm_voltage, vm_save_req, vm_pressure};
 
 class pump_fsm_t{
   public:
   uint32_t tes, tis;
-  byte state, active;
+  byte state;//, active;
   float pressure_raw, pressure_cmH2O;
   
   void act(void);

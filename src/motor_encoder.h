@@ -61,7 +61,7 @@ class motor_DC_t
     int32_t encoder_pos;
 
     int PWM_value, PWM_max;
-    uint16_t timeout_count, timeout_top;
+    //uint16_t timeout_count, timeout_top;
 
     float speed, pos;
     float speed_ref, pos_ref;
@@ -77,9 +77,7 @@ class motor_DC_t
     
     void set_PWM(int new_PWM, byte mot_enable);
     void set_voltage(float new_voltage);
-    void add_voltage(float add_voltage);
 };
-
 
 
 #endif // MOTOR_ENCODER

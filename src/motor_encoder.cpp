@@ -112,13 +112,6 @@ void motor_DC_t::set_voltage(float new_voltage)
   set_PWM((v / v_max) * PWM_max, 1);
 }
 
-void motor_DC_t::add_voltage(float add_voltage)
-{
-  v += add_voltage;
-  set_PWM((v / v_max) * PWM_max, 1);
-}
-
-
 
 /*
 TB9051 Arduino shield

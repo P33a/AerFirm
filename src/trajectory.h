@@ -39,7 +39,7 @@
 class trajectory_t
 {
   public:
-    byte active;
+    //byte active;
     float t, t_f;
     float pos_i, pos_f, m_i, m_f;
     float delta;
